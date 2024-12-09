@@ -5,7 +5,6 @@ import asyncio
 import redis.asyncio as aioredis
 import json
 
-
 class ChatHandler(tornado.websocket.WebSocketHandler):
     clients = set()  # Множество клиентов
     usernames = {}  # Словарь с соответствием клиент -> никнейм
@@ -16,7 +15,6 @@ class ChatHandler(tornado.websocket.WebSocketHandler):
     async def open(self):
         # Запрашиваем никнейм пользователя
         self.username = None
-        self.write_message("Please enter your username:")
 
     async def on_message(self, message):
         data = json.loads(message)
@@ -26,6 +24,9 @@ class ChatHandler(tornado.websocket.WebSocketHandler):
             ChatHandler.usernames[self] = self.username
             ChatHandler.clients.add(self)
             await self.notify_clients()  # Уведомляем остальных пользователей
+            # Отправляем всем сообщение о новом пользователе
+            system_message = json.dumps({"username": "System", "message": f"{self.username} has joined the chat"})
+            await self.redis.publish("chat_channel", system_message)
         else:
             # Отправляем сообщение в Redis, как было раньше
             message_text = data.get("message", "")
@@ -38,6 +39,9 @@ class ChatHandler(tornado.websocket.WebSocketHandler):
             del ChatHandler.usernames[self]
         ChatHandler.clients.remove(self)
         asyncio.create_task(self.notify_clients())
+        # Отправляем всем сообщение о выходе пользователя
+        system_message = json.dumps({"username": "System", "message": f"{self.username} has left the chat"})
+        asyncio.create_task(self.redis.publish("chat_channel", system_message))
 
     @classmethod
     async def broadcast_message(cls, message):
@@ -52,7 +56,6 @@ class ChatHandler(tornado.websocket.WebSocketHandler):
         notification = json.dumps({"type": "users", "data": user_list})
         await cls.broadcast_message(notification)
 
-
 async def redis_listener(redis):
     pubsub = redis.pubsub()
     await pubsub.subscribe("chat_channel")
@@ -63,13 +66,11 @@ async def redis_listener(redis):
             data = message["data"].decode("utf-8")
             await ChatHandler.broadcast_message(data)
 
-
 def make_app(redis):
     return tornado.web.Application([
         (r"/chat", ChatHandler, dict(redis=redis)),
         (r"/(.*)", tornado.web.StaticFileHandler, {"path": "static", "default_filename": "index.html"}),
     ])
-
 
 async def main():
     redis = aioredis.from_url("redis://localhost:6379")
@@ -79,7 +80,6 @@ async def main():
     print("Server started on http://localhost:8888")
 
     await asyncio.gather(redis_listener(redis))
-
 
 if __name__ == "__main__":
     asyncio.run(main())

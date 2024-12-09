@@ -1,5 +1,10 @@
 // Запрос имени пользователя при входе
-const username = prompt("Enter your username:", "Guest");
+let username = prompt("Enter your username:", "Guest");
+
+// Если пользователь не ввел никнейм (оставил поле пустым), заменяем его на "Unknown"
+if (!username.trim()) {
+    username = "Unknown";
+}
 
 // Инициализация WebSocket
 const ws = new WebSocket("ws://localhost:8888/chat");
@@ -17,12 +22,17 @@ ws.onmessage = function(event) {
     } else {
         // Отображение сообщений
         const message = document.createElement("div");
-        message.innerHTML = `<strong>${data.username}:</strong> ${data.message}`;
+        if (data.username === "System") {
+            // Отображение системных сообщений (например, когда пользователь зашел)
+            message.innerHTML = `<em>${data.message}</em>`;
+        } else {
+            message.innerHTML = `<strong>${data.username}:</strong> ${data.message}`;
+        }
         messages.appendChild(message);
     }
 };
 
-// Отправка сообщений
+// Отправка сообщения
 messageInput.addEventListener("keypress", function(event) {
     if (event.key === "Enter") {
         const message = messageInput.value.trim();
@@ -32,3 +42,10 @@ messageInput.addEventListener("keypress", function(event) {
         }
     }
 });
+
+// Отправка сообщения о входе в чат
+ws.onopen = function() {
+    // Отправляем сообщение о новом пользователе
+    ws.send(JSON.stringify({ username, message: "" }));
+    // Отправляем всем, что пользователь зашел
+};
