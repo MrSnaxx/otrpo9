@@ -5,31 +5,39 @@ import asyncio
 import redis.asyncio as aioredis
 import json
 
+
 class ChatHandler(tornado.websocket.WebSocketHandler):
-    clients = set()
+    clients = set()  # Множество клиентов
+    usernames = {}  # Словарь с соответствием клиент -> никнейм
 
     def initialize(self, redis):
         self.redis = redis
 
     async def open(self):
-        ChatHandler.clients.add(self)
-        await self.notify_clients()
+        # Запрашиваем никнейм пользователя
+        self.username = None
+        self.write_message("Please enter your username:")
 
     async def on_message(self, message):
-        # Распаковываем сообщение от клиента
         data = json.loads(message)
-        username = data.get("username", "Unknown")  # Имя пользователя
-        message_text = data.get("message", "")
+        if self.username is None:
+            # Если никнейм не был установлен, сохраняем его
+            self.username = data.get("username", "Unknown")
+            ChatHandler.usernames[self] = self.username
+            ChatHandler.clients.add(self)
+            await self.notify_clients()  # Уведомляем остальных пользователей
+        else:
+            # Отправляем сообщение в Redis, как было раньше
+            message_text = data.get("message", "")
+            redis_message = json.dumps({"username": self.username, "message": message_text})
+            await self.redis.publish("chat_channel", redis_message)
 
-        # Формируем сообщение для отправки
-        redis_message = json.dumps({"username": username, "message": message_text})
-
-        # Публикуем сообщение в Redis
-        await self.redis.publish("chat_channel", redis_message)
-
-    async def on_close(self):
+    def on_close(self):
+        # Удаляем клиента из списка и уведомляем об этом
+        if self in ChatHandler.usernames:
+            del ChatHandler.usernames[self]
         ChatHandler.clients.remove(self)
-        await self.notify_clients()
+        asyncio.create_task(self.notify_clients())
 
     @classmethod
     async def broadcast_message(cls, message):
@@ -39,7 +47,8 @@ class ChatHandler(tornado.websocket.WebSocketHandler):
 
     @classmethod
     async def notify_clients(cls):
-        user_list = [f"User {id(client)}" for client in cls.clients]
+        # Формируем список никнеймов
+        user_list = list(cls.usernames.values())
         notification = json.dumps({"type": "users", "data": user_list})
         await cls.broadcast_message(notification)
 
@@ -51,7 +60,6 @@ async def redis_listener(redis):
     while True:
         message = await pubsub.get_message(ignore_subscribe_messages=True)
         if message and message["type"] == "message":
-            # Рассылаем сообщение всем клиентам
             data = message["data"].decode("utf-8")
             await ChatHandler.broadcast_message(data)
 
@@ -65,10 +73,6 @@ def make_app(redis):
 
 async def main():
     redis = aioredis.from_url("redis://localhost:6379")
-
-    await redis.set("test_key", "Hello, Redis!")
-    value = await redis.get("test_key")
-    print(value.decode("utf-8"))
 
     app = make_app(redis)
     app.listen(8888)
