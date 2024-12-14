@@ -53,8 +53,3 @@ python server.py
 - aioredis
 - Redis
 
-## Автор
-
-Автор: Ваше Имя  
-Email: your.email@example.com  
-
